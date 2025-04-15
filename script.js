@@ -12,27 +12,66 @@ class GameScene extends Phaser.Scene {
         const width = this.scale.width;
         const height = this.scale.height;
 
+        // Create ground group
+        this.groundGroup = this.physics.add.staticGroup();
+        this.groundStripes = [];
+
         // Create striped ground
         const groundWidth = width * 100;
         const stripeWidth = 100; // Width of each stripe
+        const groundThickness = 200; // Ground thickness
         const numStripes = Math.ceil(groundWidth / stripeWidth);
-        this.groundStripes = [];
 
-        // Create ground group
-        this.groundGroup = this.physics.add.staticGroup();
+        // Position ground at the bottom of the viewport
+        const groundY = height - groundThickness/2; // Position ground at bottom of screen
 
         for (let i = 0; i < numStripes; i++) {
             const x = i * stripeWidth + stripeWidth / 2;
-            const y = height - 20; // Position in world space
+            const y = groundY;
             // Alternate between gray and green stripes
             const color = i % 2 === 0 ? 0x666666 : 0x00aa00;
-            const stripe = this.add.rectangle(x, y, stripeWidth, 100, color);
+            const stripe = this.add.rectangle(x, y, stripeWidth, groundThickness, color);
             this.groundGroup.add(stripe);
             this.groundStripes.push(stripe);
         }
+
+        // Create vertical columns (visual only)
+        const columnWidth = 50;
+        const columnSpacing = 300; // Space between columns
+        const numColumns = Math.ceil(groundWidth / columnSpacing);
+        this.columns = [];
+        this.branches = [];
+
+        for (let i = 0; i < numColumns; i++) {
+            const x = i * columnSpacing + columnWidth / 2;
+            const columnHeight = Phaser.Math.Between(height * 0.3, height * 0.7);
+            const grayShade = Phaser.Math.Between(0x333333, 0x999999);
+            
+            // Create visual column (no physics)
+            const column = this.add.rectangle(x, groundY - columnHeight/2, columnWidth, columnHeight, grayShade);
+            this.columns.push(column);
+
+            // Create random branches on each column
+            const numBranches = Phaser.Math.Between(2, 5);
+            for (let j = 0; j < numBranches; j++) {
+                const branchY = Phaser.Math.Between(height * 0.3, height - columnHeight);
+                const branchLength = Phaser.Math.Between(50, 150);
+                const branchDirection = Phaser.Math.Between(0, 1) === 0 ? -1 : 1; // -1 for left, 1 for right
+                
+                const branch = this.add.rectangle(
+                    x + (branchDirection * (columnWidth/2 + branchLength/2)),
+                    groundY - branchY,
+                    branchLength,
+                    20,
+                    0x888888
+                );
+                this.physics.add.existing(branch, true);
+                this.branches.push(branch);
+            }
+        }
         
         // Create player as a red rectangle (4 times larger and rectangular)
-        this.player = this.add.rectangle(100, height / 2, 50, 164, 0xff0000);
+        this.player = this.add.rectangle(100, groundY - 200, 50, 164, 0xff0000);
         
         // Enable physics on the player
         this.physics.add.existing(this.player);
@@ -46,6 +85,15 @@ class GameScene extends Phaser.Scene {
         
         // Add collision between player and ground group
         this.physics.add.collider(this.player, this.groundGroup);
+        
+        // Add one-way platform collision for branches
+        this.branches.forEach(branch => {
+            this.physics.add.collider(this.player, branch, null, (player, branch) => {
+                // Only collide if player is moving downward and above the platform
+                return player.body.velocity.y > 0 && 
+                       player.body.bottom <= branch.body.top + 10;
+            });
+        });
 
         // Set up keyboard controls
         this.cursors = this.input.keyboard.addKeys({
@@ -55,11 +103,21 @@ class GameScene extends Phaser.Scene {
             right: 'D'
         });
 
-        // Camera setup with much larger bounds
-        this.cameras.main.setBounds(0, 0, groundWidth, height * 100);
+        // Camera setup
+        this.cameras.main.setBounds(
+            0,                    // x
+            -height * 50,        // y (extend far up for high jumps)
+            groundWidth,         // width
+            height * 100         // height (extend far down)
+        );
+        
+        // Follow player with slight lerp (smooth follow)
         this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+        
+        // Keep player vertically centered in viewport
+        this.cameras.main.setFollowOffset(0, 0);
+        
         this.cameras.main.setZoom(1);
-        this.targetZoom = 1;
 
         // Handle window resize
         this.scale.on('resize', this.handleResize, this);
@@ -74,19 +132,26 @@ class GameScene extends Phaser.Scene {
         // Create new ground stripes
         const groundWidth = gameSize.width * 100;
         const stripeWidth = 100;
+        const groundThickness = 200;
         const numStripes = Math.ceil(groundWidth / stripeWidth);
+        const groundY = gameSize.height - groundThickness/2; // Position ground at bottom of screen
 
         for (let i = 0; i < numStripes; i++) {
             const x = i * stripeWidth + stripeWidth / 2;
-            const y = gameSize.height - 20; // Position in world space
+            const y = groundY;
             const color = i % 2 === 0 ? 0x666666 : 0x00aa00;
-            const stripe = this.add.rectangle(x, y, stripeWidth, 100, color);
+            const stripe = this.add.rectangle(x, y, stripeWidth, groundThickness, color);
             this.groundGroup.add(stripe);
             this.groundStripes.push(stripe);
         }
         
         // Update camera bounds
-        this.cameras.main.setBounds(0, 0, groundWidth, gameSize.height * 100);
+        this.cameras.main.setBounds(
+            0,
+            -gameSize.height * 50,
+            groundWidth,
+            gameSize.height * 100
+        );
     }
 
     update() {
@@ -104,26 +169,8 @@ class GameScene extends Phaser.Scene {
             this.player.body.setVelocityY(-1260); // Doubled from -630
         }
 
-        // Dynamic camera zoom based on player's vertical position
-        const viewportHeight = this.scale.height;
-        const playerHeight = this.player.y;
-        const maxZoomOut = 0.3;        // Maximum zoom out level (30% of original size)
-        const zoomStartHeight = viewportHeight * 0.4;  // Start zooming when player is above 40% of screen height
-        const zoomEndHeight = viewportHeight * 0.2;    // Maximum zoom at 20% of screen height
-
-        // Calculate zoom based on player height
-        if (playerHeight < zoomStartHeight) {
-            const zoomRange = zoomStartHeight - zoomEndHeight;
-            const zoomProgress = Math.min(1, (zoomStartHeight - playerHeight) / zoomRange);
-            this.targetZoom = 1 - (zoomProgress * (1 - maxZoomOut));
-        } else {
-            this.targetZoom = 1;
-        }
-
-        // Smoothly transition to target zoom
-        const currentZoom = this.cameras.main.zoom;
-        const zoomSpeed = 0.1;
-        this.cameras.main.setZoom(currentZoom + (this.targetZoom - currentZoom) * zoomSpeed);
+        // Camera follows player with fixed zoom
+        this.cameras.main.setZoom(1);
     }
 }
 
