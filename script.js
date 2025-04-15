@@ -121,6 +121,14 @@ class GameScene extends Phaser.Scene {
 
         // Handle window resize
         this.scale.on('resize', this.handleResize, this);
+
+        // Jump variables
+        this.jumpStartTime = 0;
+        this.isJumping = false;
+        this.maxJumpDuration = 500; // Maximum jump hold duration in milliseconds
+        this.minJumpForce = -400;   // Minimum jump force (for quick taps)
+        this.maxJumpForce = -1260;  // Maximum jump force (for full holds)
+        this.jumpAcceleration = -2000; // Jump acceleration while holding W
     }
 
     handleResize(gameSize) {
@@ -164,13 +172,62 @@ class GameScene extends Phaser.Scene {
             this.player.body.setAccelerationX(0);
         }
 
-        // Handle jumping with doubled velocity
-        if (this.cursors.up.isDown && this.player.body.touching.down) {
-            this.player.body.setVelocityY(-1260); // Doubled from -630
+        // Handle variable jump height
+        if (this.cursors.up.isDown && this.player.body.touching.down && !this.isJumping) {
+            // Start jump
+            this.isJumping = true;
+            this.jumpStartTime = this.time.now;
+            // Apply initial jump force
+            this.player.body.setVelocityY(this.minJumpForce);
         }
 
-        // Camera follows player with fixed zoom
-        this.cameras.main.setZoom(1);
+        // Continue jump while W is held
+        if (this.isJumping && this.cursors.up.isDown) {
+            const holdDuration = this.time.now - this.jumpStartTime;
+            if (holdDuration < this.maxJumpDuration) {
+                // Apply upward acceleration while holding W
+                this.player.body.setAccelerationY(this.jumpAcceleration);
+            } else {
+                // Stop applying acceleration after max duration
+                this.player.body.setAccelerationY(0);
+            }
+        } else {
+            // Stop applying acceleration when W is released
+            this.player.body.setAccelerationY(0);
+        }
+
+        // End jump when W is released
+        if (this.isJumping && !this.cursors.up.isDown) {
+            this.isJumping = false;
+            this.player.body.setAccelerationY(0);
+        }
+
+        // Reset jump state when touching ground
+        if (this.player.body.touching.down) {
+            this.isJumping = false;
+            this.player.body.setAccelerationY(0);
+        }
+
+        // Dynamic camera zoom based on player's vertical position
+        const viewportHeight = this.scale.height;
+        const playerHeight = this.player.y;
+        const maxZoomOut = 0.3;
+        const zoomStartHeight = viewportHeight * 0.4;
+        const zoomEndHeight = viewportHeight * 0.2;
+
+        // Calculate zoom based on player height
+        if (playerHeight < zoomStartHeight) {
+            const zoomRange = zoomStartHeight - zoomEndHeight;
+            const zoomProgress = Math.min(1, (zoomStartHeight - playerHeight) / zoomRange);
+            this.targetZoom = 1 - (zoomProgress * (1 - maxZoomOut));
+        } else {
+            this.targetZoom = 1;
+        }
+
+        // Smoothly transition to target zoom
+        const currentZoom = this.cameras.main.zoom;
+        const zoomSpeed = 0.1;
+        this.cameras.main.setZoom(currentZoom + (this.targetZoom - currentZoom) * zoomSpeed);
     }
 }
 
